@@ -187,23 +187,12 @@ class MainActivity : AppCompatActivity() {
 
     private fun toggleVoiceRecording() {
         try {
-            val file = File(cacheDir, "sonora-voice-${System.currentTimeMillis()}.m4a")
-            val r = if (android.os.Build.VERSION.SDK_INT >= 31) MediaRecorder(this) else MediaRecorder()
-            r.setAudioSource(MediaRecorder.AudioSource.VOICE_COMMUNICATION)
-            r.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-            r.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-            r.setAudioEncodingBitRate(128000)
-            r.setAudioSamplingRate(44100)
-            r.setOutputFile(file.absolutePath)
-            r.prepare()
-            r.start()
-            recorder = r; recordingFile = file; recording = true
             val sessionId = r.audioSessionId
-            try { if (AutomaticGainControl.isAvailable()) voiceAgc = AutomaticGainControl.create(sessionId)?.apply { enabled = true } } catch (_: Exception) {}
-            try { if (NoiseSuppressor.isAvailable()) voiceNs = NoiseSuppressor.create(sessionId)?.apply { enabled = true } } catch (_: Exception) {}
-            try { if (AcousticEchoCanceler.isAvailable()) voiceAec = AcousticEchoCanceler.create(sessionId)?.apply { enabled = true } } catch (_: Exception) {}
-            val active = listOfNotNull(voiceAgc, voiceNs, voiceAec).size
-            voiceInfo.text = "● ĐANG GHI ÂM • Voice Communication • $active/3 bộ xử lý khả dụng"
+try { if (AutomaticGainControl.isAvailable()) voiceAgc = AutomaticGainControl.create(sessionId)?.apply { enabled = true } } catch (_: Exception) {}
+try { if (NoiseSuppressor.isAvailable()) voiceNs = NoiseSuppressor.create(sessionId)?.apply { enabled = true } } catch (_: Exception) {}
+try { if (AcousticEchoCanceler.isAvailable()) voiceAec = AcousticEchoCanceler.create(sessionId)?.apply { enabled = true } } catch (_: Exception) {}
+val active = listOfNotNull(voiceAgc, voiceNs, voiceAec).size
+voiceInfo.text = "● ĐANG GHI ÂM • Voice Communication • $active/3 bộ xử lý khả dụng"
         } catch (e: Exception) {
             recording = false
             try { recorder?.release() } catch (_: Exception) {}
