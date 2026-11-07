@@ -1,29 +1,63 @@
 name: Build SONORA APK
+
 on:
   workflow_dispatch:
   push:
-    branches: [ "main" ]
+    branches:
+      - main
+
 permissions:
   contents: read
-  actions: write
+
+concurrency:
+  group: sonora-apk-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
+    name: Build debug APK
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
-      - name: Set up Java
+
+      - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 17
-      - name: Set up Gradle
+          java-version: '17'
+
+      # Repo hiện chưa có gradlew/gradle-wrapper.jar.
+      # setup-gradle cài Gradle 8.9 trực tiếp vào PATH nên không gọi ./gradlew.
+      - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: 8.9
+          gradle-version: '8.9'
+
+      - name: Verify build files
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f settings.gradle.kts
+          test -f build.gradle.kts
+          test -f app/build.gradle.kts
+          test -f app/src/main/AndroidManifest.xml
+          test -f app/src/main/java/com/sonora/MainActivity.kt
+          gradle --version
+
       - name: Build debug APK
-        run: gradle :app:assembleDebug
-      - name: Upload APK
+        run: gradle :app:assembleDebug --no-daemon --stacktrace
+
+      - name: Confirm APK exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s app/build/outputs/apk/debug/app-debug.apk
+          ls -lh app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
           name: SONORA-APK
