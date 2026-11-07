@@ -9,6 +9,7 @@ import android.media.AudioDeviceInfo
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioRecord
+import android.media.AudioRecordingConfiguration
 import android.media.MediaRecorder
 import android.media.audiofx.AcousticEchoCanceler
 import android.media.audiofx.AutomaticGainControl
@@ -16,7 +17,10 @@ import android.media.audiofx.Equalizer
 import android.media.audiofx.LoudnessEnhancer
 import android.media.audiofx.NoiseSuppressor
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.Gravity
 import android.view.View
 import android.widget.*
@@ -41,6 +45,8 @@ class MainActivity : AppCompatActivity() {
     private var agc: AutomaticGainControl? = null
     private var ns: NoiseSuppressor? = null
     private var aec: AcousticEchoCanceler? = null
+    private var recordingCallback: AudioManager.AudioRecordingCallback? = null
+    private var autoDetectEnabled = false
     @Volatile private var micGain = 2f
     @Volatile private var gateEnabled = true
     @Volatile private var compressorEnabled = true
@@ -54,12 +60,23 @@ class MainActivity : AppCompatActivity() {
     private lateinit var micButton: TextView
     private lateinit var meterInfo: TextView
     private lateinit var routeInfo: TextView
+    private lateinit var autoMicInfo: TextView
+    private lateinit var autoDetectButton: TextView
 
     private val chooseAudio = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let { playUri(it) }
     }
     private val requestMic = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) startMicTest() else micInfo.text = "Bạn chưa cấp quyền micro cho SONORA."
+    }
+    private val requestDetectPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) {
+            autoDetectEnabled = true
+            autoDetectButton.text = "■  TẮT AUTO MIC DETECT"
+            registerRecordingMonitor()
+        } else {
+            autoMicInfo.text = "Chưa cấp quyền micro nên Android không cho theo dõi trạng thái ghi âm."
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -87,6 +104,7 @@ class MainActivity : AppCompatActivity() {
             })
         }
         routeInfo.text = getRoutes()
+        updateAutoMicStatus(emptyList())
     }
 
     private fun buildUi() {
@@ -98,7 +116,7 @@ class MainActivity : AppCompatActivity() {
         }
         val names = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), 0, 0, 0) }
         names.addView(label("SONORA", 25f, Color.WHITE, true))
-        names.addView(label("SOUND EXPERIENCE • V2.1", 10f, 0xFF9DA9C9.toInt()))
+        names.addView(label("SOUND EXPERIENCE • V2.2", 10f, 0xFF9DA9C9.toInt()))
         header.addView(logo); header.addView(names); root.addView(header)
         root.addView(space(18))
         root.addView(label("●  SONORA ENGINE     READY", 11f, 0xFFE4E8FF.toInt(), true).apply {
@@ -129,7 +147,7 @@ class MainActivity : AppCompatActivity() {
 
         root.addView(space(16)); root.addView(section("OUTPUT ENGINE"))
         val output = card()
-        output.addView(label("OUTPUT BOOST", 12f, 0xFFBFC9E8.toInt(), true))
+        output.addView(label("OUTPUT BOOST • ÂM LƯỢNG PHÁT TRONG SONORA", 12f, 0xFFBFC9E8.toInt(), true))
         outputGainInfo = label("Mức tăng: 2.5 dB", 12f, 0xFF9DA9C9.toInt())
         output.addView(outputGainInfo)
         output.addView(SeekBar(this).apply {
@@ -156,26 +174,26 @@ class MainActivity : AppCompatActivity() {
 
         root.addView(space(16)); root.addView(section("MIC ENGINE • INPUT TEST"))
         val micCard = card()
-        micCard.addView(label("PREAMP / MIC GAIN", 12f, 0xFFBFC9E8.toInt(), true))
-        val gainLabel = label("Tăng đầu vào: 2.0×", 12f, 0xFF9DA9C9.toInt())
+        micCard.addView(label("MIC INPUT TEST GAIN • CHỈ ĐO TÍN HIỆU TRONG SONORA", 12f, 0xFFBFC9E8.toInt(), true))
+        val gainLabel = label("Mức preview đầu vào: 2.0×", 12f, 0xFF9DA9C9.toInt())
         micCard.addView(gainLabel)
         micCard.addView(SeekBar(this).apply {
             max = 300; progress = 10
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(s: SeekBar?, v: Int, fromUser: Boolean) {
                     micGain = 1f + v / 10f
-                    gainLabel.text = "Tăng đầu vào: %.1f×".format(micGain)
+                    gainLabel.text = "Mức preview đầu vào: %.1f×".format(micGain)
                 }
                 override fun onStartTrackingTouch(s: SeekBar?) {}
                 override fun onStopTrackingTouch(s: SeekBar?) {}
             })
         })
         micCard.addView(Switch(this).apply {
-            text = "NOISE GATE"; setTextColor(0xFFBFC9E8.toInt()); isChecked = true
+            text = "NOISE GATE • PREVIEW"; setTextColor(0xFFBFC9E8.toInt()); isChecked = true
             setOnCheckedChangeListener { _, checked -> gateEnabled = checked }
         })
         micCard.addView(Switch(this).apply {
-            text = "COMPRESSOR + LIMITER"; setTextColor(0xFFBFC9E8.toInt()); isChecked = true
+            text = "COMPRESSOR + LIMITER • PREVIEW"; setTextColor(0xFFBFC9E8.toInt()); isChecked = true
             setOnCheckedChangeListener { _, checked -> compressorEnabled = checked }
         })
         micInfo = label("MIC TEST: ĐANG TẮT", 13f, 0xFF9DA9C9.toInt(), true)
@@ -184,9 +202,21 @@ class MainActivity : AppCompatActivity() {
         micButton = button("●  BẮT ĐẦU KIỂM TRA MICRO") { askMic() }
         micCard.addView(micButton)
         micCard.addView(label(
-            "Chú ý: Preamp, Gate, Compressor và Limiter chỉ xử lý luồng kiểm tra bên trong SONORA. Android không cho APK thông thường thay mic đầu vào của Free Fire; các nút này chưa boost tiếng truyền vào game.",
+            "Lưu ý: các thanh xử lý ở đây chỉ thay đổi phép đo preview. AGC/Noise Suppression/AEC chỉ tác động phiên thu của SONORA; không tăng tiếng gửi vào Free Fire hay ứng dụng khác.",
             10f, 0xFFFFC58A.toInt()))
         root.addView(micCard)
+
+        root.addView(space(16)); root.addView(section("AUTO MIC DETECT"))
+        val detectCard = card()
+        detectCard.addView(label("THE SYSTEM MICROPHONE MONITOR", 12f, 0xFFBFC9E8.toInt(), true))
+        autoMicInfo = label("ĐANG TẮT • Chưa theo dõi phiên thu âm của hệ thống.", 12f, 0xFF9DA9C9.toInt())
+        detectCard.addView(autoMicInfo)
+        autoDetectButton = button("◎  BẬT AUTO MIC DETECT") { toggleAutoDetect() }
+        detectCard.addView(autoDetectButton)
+        detectCard.addView(label(
+            "Khi bật, SONORA chỉ đọc trạng thái phiên ghi âm Android công bố. Không tự mở micro, không ghi âm nền và không thể bơm nhạc/giọng đã xử lý vào mic Free Fire trên máy không root.",
+            10f, 0xFFFFC58A.toInt()))
+        root.addView(detectCard)
 
         root.addView(space(16)); root.addView(section("AUDIO ROUTING"))
         val routing = card()
@@ -196,6 +226,73 @@ class MainActivity : AppCompatActivity() {
         root.addView(routing)
         root.addView(space(14))
         root.addView(label("SONORA • Made for your sound", 11f, 0xFF7885A8.toInt()).apply { gravity = Gravity.CENTER })
+    }
+
+    private fun toggleAutoDetect() {
+        if (autoDetectEnabled) {
+            autoDetectEnabled = false
+            unregisterRecordingMonitor()
+            autoDetectButton.text = "◎  BẬT AUTO MIC DETECT"
+            autoMicInfo.text = "ĐANG TẮT • SONORA không theo dõi micro hệ thống."
+            return
+        }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
+            autoMicInfo.text = "Android phiên bản này không hỗ trợ API theo dõi phiên ghi âm."
+            return
+        }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            autoDetectEnabled = true
+            autoDetectButton.text = "■  TẮT AUTO MIC DETECT"
+            registerRecordingMonitor()
+        } else {
+            requestDetectPermission.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
+    private fun registerRecordingMonitor() {
+        if (!autoDetectEnabled || Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return
+        try {
+            val manager = getSystemService(AUDIO_SERVICE) as AudioManager
+            val callback = recordingCallback ?: object : AudioManager.AudioRecordingCallback() {
+                override fun onRecordingConfigChanged(configs: List<AudioRecordingConfiguration>?) {
+                    runOnUiThread { updateAutoMicStatus(configs ?: emptyList()) }
+                }
+            }.also { recordingCallback = it }
+            manager.registerAudioRecordingCallback(callback, Handler(Looper.getMainLooper()))
+            updateAutoMicStatus(manager.activeRecordingConfigurations)
+        } catch (e: Exception) {
+            autoMicInfo.text = "Không thể theo dõi trạng thái micro: " + (e.message ?: "API bị giới hạn")
+        }
+    }
+
+    private fun unregisterRecordingMonitor() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return
+        try {
+            val manager = getSystemService(AUDIO_SERVICE) as AudioManager
+            recordingCallback?.let { manager.unregisterAudioRecordingCallback(it) }
+        } catch (_: Exception) {}
+    }
+
+    private fun updateAutoMicStatus(configs: List<AudioRecordingConfiguration>) {
+        if (!::autoMicInfo.isInitialized) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val otherApps = configs.filter { it.clientPackageName != packageName }
+            if (otherApps.isEmpty()) {
+                autoMicInfo.text = if (autoDetectEnabled)
+                    "● KHÔNG PHÁT HIỆN ứng dụng khác đang thu micro."
+                else "ĐANG TẮT • SONORA không theo dõi micro hệ thống."
+            } else {
+                val names = otherApps.mapNotNull { it.clientPackageName }.distinct()
+                autoMicInfo.text = "● PHÁT HIỆN " + otherApps.size + " phiên thu: " +
+                    if (names.isEmpty()) "Android không cung cấp tên ứng dụng" else names.joinToString()
+            }
+        } else {
+            autoMicInfo.text = if (configs.isEmpty()) {
+                if (autoDetectEnabled) "● Không thấy phiên ghi âm đang hoạt động." else "ĐANG TẮT • SONORA không theo dõi micro hệ thống."
+            } else {
+                "● Có " + configs.size + " phiên ghi âm đang hoạt động. Android phiên bản này không cung cấp tên ứng dụng."
+            }
+        }
     }
 
     private fun askMic() {
@@ -228,7 +325,7 @@ class MainActivity : AppCompatActivity() {
                     if (n > 0) {
                         val peak = processForMeter(data, n)
                         val db = if (peak < 0.00001f) -90f else (20.0 * log10(peak.toDouble())).toFloat().coerceAtLeast(-90f)
-                        runOnUiThread { if (micRunning) meterInfo.text = "Mức sau xử lý thử: %.1f dBFS • Peak %.3f".format(db, peak) }
+                        runOnUiThread { if (micRunning) meterInfo.text = "Mức preview: %.1f dBFS • Peak %.3f".format(db, peak) }
                     } else if (n < 0) break
                 }
             }.apply { name = "SonoraMicMeter"; start() }
@@ -239,7 +336,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // DSP preview for the in-app meter only; it is not routed to Free Fire.
     private fun processForMeter(data: ShortArray, count: Int): Float {
         var sum = 0.0
         var peak = 0f
@@ -350,7 +446,19 @@ class MainActivity : AppCompatActivity() {
         try { enhancer?.release() } catch (_: Exception) {}; enhancer = null
     }
 
+    override fun onPause() {
+        unregisterRecordingMonitor()
+        super.onPause()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (autoDetectEnabled) registerRecordingMonitor()
+    }
+
     override fun onDestroy() {
+        autoDetectEnabled = false
+        unregisterRecordingMonitor()
         if (micRunning) stopMicTest() else releaseMic()
         releaseOutputEffects()
         player?.release(); player = null
