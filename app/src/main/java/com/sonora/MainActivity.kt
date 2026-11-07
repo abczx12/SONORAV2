@@ -274,25 +274,18 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateAutoMicStatus(configs: List<AudioRecordingConfiguration>) {
-        if (!::autoMicInfo.isInitialized) return
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val otherApps = configs.filter { it.clientPackageName != packageName }
-            if (otherApps.isEmpty()) {
-                autoMicInfo.text = if (autoDetectEnabled)
-                    "● KHÔNG PHÁT HIỆN ứng dụng khác đang thu micro."
-                else "ĐANG TẮT • SONORA không theo dõi micro hệ thống."
-            } else {
-                val names = otherApps.mapNotNull { it.clientPackageName }.distinct()
-                autoMicInfo.text = "● PHÁT HIỆN " + otherApps.size + " phiên thu: " +
-                    if (names.isEmpty()) "Android không cung cấp tên ứng dụng" else names.joinToString()
-            }
+    if (!::autoMicInfo.isInitialized) return
+
+    if (configs.isEmpty()) {
+        autoMicInfo.text = if (autoDetectEnabled) {
+            "● KHÔNG PHÁT HIỆN phiên ghi âm nào mà Android công bố."
         } else {
-            autoMicInfo.text = if (configs.isEmpty()) {
-                if (autoDetectEnabled) "● Không thấy phiên ghi âm đang hoạt động." else "ĐANG TẮT • SONORA không theo dõi micro hệ thống."
-            } else {
-                "● Có " + configs.size + " phiên ghi âm đang hoạt động. Android phiên bản này không cung cấp tên ứng dụng."
-            }
+            "ĐANG TẮT • SONORA không theo dõi micro hệ thống."
         }
+    } else {
+        autoMicInfo.text = "● ANDROID BÁO CÓ ${configs.size} " +
+            "phiên ghi âm đang hoạt động. Không xác định được tên ứng dụng."
+    }
     }
 
     private fun askMic() {
