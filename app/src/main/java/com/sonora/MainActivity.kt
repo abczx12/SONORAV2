@@ -699,6 +699,9 @@ class MainActivity : AppCompatActivity() {
     private fun formatDb(value: Int): String =
         String.format(Locale.US, "%.1f", value / 100f)
 
+    private fun formatDb(value: Float): String =
+        String.format(Locale.US, "%.1f", value)
+
     private fun dp(value: Int): Int =
         (value * resources.displayMetrics.density).toInt()
 
